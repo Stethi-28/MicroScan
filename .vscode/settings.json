@@ -1,0 +1,4 @@
+{
+  "liveServer.settings.port": 5173,
+  "files.exclude": { "**/node_modules": true }
+}

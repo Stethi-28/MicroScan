@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Microplastic Bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <div class="toolbar" role="toolbar" aria-label="Acquire image">
+    <button class="tb primary" id="btnLive" type="button" title="Detect particles continuously from the camera">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h12v10H3zM15 10l6-3v10l-6-3"/></svg><span>Live</span></button>
+    <span id="liveCtl" hidden><button class="tb" id="btnFreeze" type="button" title="Keep the current frame">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg><span>Freeze</span></button></span>
+    <button class="tb" id="btnUpload" type="button" title="Analyse an image file">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span>Upload</span></button>
+    <label id="camPick" hidden><select id="camSel" aria-label="Camera"></select></label>
+    <input type="file" id="inUpload" accept="image/*" multiple hidden>
+    <video id="video" playsinline muted hidden></video>
+  </div>
+  <div id="liveMsg" class="livemsg" hidden></div>
+  <div class="stage" id="stage">
+    <div class="calbar" id="calbar" hidden>
+      <span id="calMsg"></span><input type="number" id="calLen" step="any" hidden aria-label="Known length in micrometres"><span id="calUnit" hidden></span>
+      <button class="btn small" id="calApply" type="button" hidden>Set scale</button><button class="btn small" id="calCancel" type="button">Cancel</button>
+    </div>
+    <div class="canvas-wrap" id="wrap">
+      <div class="frame">
+        <canvas id="view" width="10" height="10" aria-label="Image with detected particles" hidden></canvas>
+        <div class="readout" id="readout" aria-live="polite"></div>
+        <div class="livebadge" id="liveTag" hidden><i></i>LIVE <span id="fps"></span></div>
+      </div>
+    </div>
+    <span id="imgName" hidden></span>
+  </div>
+</main>
+<div class="drop" id="drop" hidden>Drop image to analyze</div>
+<script src="js/app.js"></script>
+</body>
+</html>

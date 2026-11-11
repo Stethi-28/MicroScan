@@ -1,0 +1,9 @@
+{
+  "name": "microplastic-bench",
+  "version": "1.0.0",
+  "description": "Microplastic detection and classification in the browser (camera, photo or upload; built-in rules or a YOLOv8 ONNX model).",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  }
+}
