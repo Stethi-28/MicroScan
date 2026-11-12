@@ -49,7 +49,10 @@ const COLOR_SW={"black":"#1b1b1b","white / clear":"#f3f3f0","grey":"#8c8c8c","re
 
 function analyze(){
   if(!S.base)return Promise.resolve();
-  return M.ready.then(()=>M.session?analyzeYolo():undefined);
+  return M.ready.then(()=>M.session?analyzeYolo():undefined).catch(e=>{
+    console.error(e);
+    showMsg("Detection failed: "+esc(e?.message||String(e))+" Reload the page with Ctrl + Shift + R and try again.");
+  });
 }
 
 function features(c,lab,q,d,umPx){
@@ -242,12 +245,25 @@ const M={ready:null,session:null,name:"",task:"detect",names:[],imgsz:640,conf:0
 // WebGPU (graphics card) when the browser supports it; otherwise the processor, using several cores
 // when the page is cross-origin isolated (the server sends the COOP/COEP headers, see vercel.json).
 let WANT_GPU=false;
+// Compatibility mode: no graphics card, one processor core. Used automatically on a device where the
+// faster modes failed or froze (remembered per browser), or forced with ?safe=1 in the address.
+const SAFE_KEY="microscan-safe-mode";
+const SAFE=(()=>{try{const q=new URLSearchParams(location.search);if(q.has("fast"))localStorage.removeItem(SAFE_KEY);return q.has("safe")||localStorage.getItem(SAFE_KEY)==="1";}catch(e){return false;}})();
+function enterSafeMode(reason){
+  console.warn("Switching to compatibility mode:",reason);
+  let already=false;try{already=localStorage.getItem(SAFE_KEY)==="1";localStorage.setItem(SAFE_KEY,"1");}catch(e){}
+  if(SAFE||already){showMsg("Detection isn't working in this browser. "+esc(String(reason))+" Try updating the browser, or use Chrome or Edge.");return;}
+  showMsg("Switching to compatibility mode for this browser…");
+  setTimeout(()=>location.reload(),600);
+}
+// Rejects if a promise takes longer than ms (e.g. a graphics driver that hangs).
+function withTimeout(p,ms,what){let t;return Promise.race([p,new Promise((_,rej)=>{t=setTimeout(()=>rej(new Error(what+" took too long.")),ms);})]).finally(()=>clearTimeout(t));}
 async function ensureOrt(){
   if(window.ort)return;
   // Only load the (larger) WebGPU runtime when the computer actually has a usable graphics adapter.
-  try{WANT_GPU=!!(navigator.gpu&&await navigator.gpu.requestAdapter());}catch(e){WANT_GPU=false;}
+  if(!SAFE){try{WANT_GPU=!!(navigator.gpu&&await withTimeout(navigator.gpu.requestAdapter(),5000,"Finding the graphics card"));}catch(e){WANT_GPU=false;}}
   return new Promise((res,rej)=>{const sc=document.createElement("script");sc.src=ORT_BASE+(WANT_GPU?"ort.webgpu.min.js":"ort.wasm.min.js");sc.onload=()=>{
-      ort.env.wasm.numThreads=self.crossOriginIsolated?Math.max(1,Math.min(4,(navigator.hardwareConcurrency||2)-1)):1;
+      ort.env.wasm.numThreads=(!SAFE&&self.crossOriginIsolated)?Math.max(1,Math.min(4,(navigator.hardwareConcurrency||2)-1)):1;
       ort.env.wasm.wasmPaths=ORT_BASE;res();};
     sc.onerror=()=>rej(new Error("The model runtime couldn't be loaded. Check that vendor/onnxruntime-web/ is next to index.html and that the app is opened through a local server (npm start)."));document.head.appendChild(sc);});
 }
@@ -276,25 +292,31 @@ async function loadModel(url){
     if(!r.ok)throw new Error(`${url} was not found. Check that the file is in the model folder.`);
     const buf=await r.arrayBuffer();
     const meta=onnxMeta(buf);
-    let sess=null;M.backend="cpu";
-    if(WANT_GPU){
-      try{sess=await ort.InferenceSession.create(new Uint8Array(buf),{executionProviders:["webgpu"],graphOptimizationLevel:"all"});M.backend="gpu";}
-      catch(e){console.info("WebGPU couldn't run the model; using the processor instead.");sess=null;}
-    }
-    if(!sess)sess=await ort.InferenceSession.create(new Uint8Array(buf),{executionProviders:["wasm"],graphOptimizationLevel:"all"});
-    console.info(`YOLO11 running on ${M.backend==="gpu"?"the graphics card (WebGPU)":`the processor (${ort.env.wasm.numThreads} thread${ort.env.wasm.numThreads>1?"s":""})`}.`);
     const isz=(meta.imgsz||"").match(/\d+/g);const imgsz=isz?+isz[0]:640;
-    const dummy=new ort.Tensor("float32",new Float32Array(3*imgsz*imgsz),[1,3,imgsz,imgsz]);
-    const out=await sess.run({[sess.inputNames[0]]:dummy});
+    let sess=null,out=null;M.backend="cpu";
+    const dummy=()=>({[sess.inputNames[0]]:new ort.Tensor("float32",new Float32Array(3*imgsz*imgsz),[1,3,imgsz,imgsz])});
+    if(WANT_GPU){
+      try{
+        sess=await withTimeout(ort.InferenceSession.create(new Uint8Array(buf),{executionProviders:["webgpu"],graphOptimizationLevel:"all"}),30000,"Starting the model on the graphics card");
+        out=await withTimeout(sess.run(dummy()),30000,"A test detection on the graphics card");
+        M.backend="gpu";
+      }catch(e){console.info("WebGPU couldn't run the model; using the processor instead.",e?.message||e);sess=null;out=null;}
+    }
+    if(!sess){
+      sess=await withTimeout(ort.InferenceSession.create(new Uint8Array(buf),{executionProviders:["wasm"],graphOptimizationLevel:"all"}),60000,"Starting the model");
+      out=await withTimeout(sess.run(dummy()),60000,"A test detection");
+    }
+    console.info(`YOLO11 running on ${M.backend==="gpu"?"the graphics card (WebGPU)":`the processor (${ort.env.wasm.numThreads} thread${ort.env.wasm.numThreads>1?"s":""})`}${SAFE?" [compatibility mode]":""}.`);
     const o0=out[sess.outputNames[0]];
     if(!o0||o0.dims.length!==3)throw new Error("The model file isn't a standard YOLO11 ONNX export.");
     const seg=sess.outputNames.length>1&&out[sess.outputNames[1]]?.dims.length===4;
     const nc=o0.dims[1]-4-(seg?32:0);
     let names=parseNames(meta.names);if(names.length!==nc)names=Array.from({length:nc},(_,i)=>names[i]||"class "+i);
-    Object.assign(M,{session:sess,name:url.split("/").pop(),task:seg?"segment":"detect",names,imgsz});
+    Object.assign(M,{session:sess,buf,name:url.split("/").pop(),task:seg?"segment":"detect",names,imgsz});
     buildModelClasses();
   }catch(e){
     M.session=null;
+    if(!SAFE&&/took too long|wasm|worker|thread/i.test(e?.message||"")){enterSafeMode(e?.message||e);return;}
     const local=location.protocol==="file:";
     let why=esc(e?.message||String(e));if(!/[.!?]$/.test(why))why+=".";
     showMsg("The YOLO11 model couldn't be loaded. "+why+(local?" Open the app through the local server (run <code>npm start</code>, then go to http://localhost:5173) instead of opening index.html directly.":""));
@@ -317,7 +339,17 @@ async function analyzeYolo(){
   const px=x.getImageData(0,0,sz,sz).data,N=sz*sz,f=new Float32Array(3*N);
   for(let i=0,j=0;i<N;i++,j+=4){f[i]=px[j]/255;f[i+N]=px[j+1]/255;f[i+2*N]=px[j+2]/255;}
   const sess=M.session;
-  const out=await runModel(sess,{[sess.inputNames[0]]:new ort.Tensor("float32",f,[1,3,sz,sz])});
+  const feeds={[sess.inputNames[0]]:new ort.Tensor("float32",f,[1,3,sz,sz])};
+  let out;
+  try{out=await withTimeout(runModel(sess,feeds),45000,"Detection");}
+  catch(e){
+    if(M.backend!=="gpu"){if(!SAFE&&/took too long/.test(e.message)){enterSafeMode(e.message);return;}throw e;}
+    // The graphics card failed on this computer: switch to the processor for the rest of the session and retry.
+    console.warn("WebGPU failed during detection; switching to the processor.",e);
+    M.session=await ort.InferenceSession.create(new Uint8Array(M.buf),{executionProviders:["wasm"],graphOptimizationLevel:"all"});
+    M.backend="cpu";
+    return analyzeYolo();
+  }
   if(tok!==M.tok||sess!==M.session)return;
   const o0=out[sess.outputNames[0]],C=o0.dims[1],A=o0.dims[2],d=o0.data,seg=M.task==="segment",nm=seg?32:0,nc=C-4-nm;
   // candidates above threshold
@@ -533,6 +565,9 @@ $("#hvDelete").onclick=async()=>{
   catch(e){toast("Couldn't delete. "+e.message);}
 };
 document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;if(!$("#histView").hidden)closeView();else if(!$("#histPanel").hidden)closeHistory();});
+
+window.addEventListener("error",e=>{if(e.message&&!/ResizeObserver/.test(e.message))showMsg("Something went wrong: "+esc(e.message)+" Reload the page with Ctrl + Shift + R.");});
+window.addEventListener("unhandledrejection",e=>{const m=e.reason?.message||String(e.reason||"");if(m)showMsg("Something went wrong: "+esc(m)+" Reload the page with Ctrl + Shift + R.");});
 
 let toastT=null;function toast(t){let el=$(".toast");if(!el){el=document.createElement("div");el.className="toast";el.setAttribute("role","status");document.body.appendChild(el);}el.textContent=t;el.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>el.hidden=true,3800);}
 

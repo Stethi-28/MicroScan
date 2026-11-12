@@ -16,6 +16,7 @@ microplastic-bench/
 ├── vendor/onnxruntime-web/     ONNX Runtime Web 1.20.1 (runs the model offline; WebGPU + multi-core builds)
 ├── api/history.js              History API (save, list, open, delete), runs as a Vercel function
 ├── lib/store.js                History storage: Postgres when DATABASE_URL is set, else data/history.json
+├── db/schema.sql               Database table for History (run once in Supabase's SQL Editor)
 ├── dev-server.js               Local server for development: serves the app and runs /api
 ├── package.json                `npm start` runs dev-server.js
 ├── vercel.json                 Vercel settings: static site + /api functions, no build step
@@ -85,10 +86,11 @@ Optional: to require a passcode later, add an `APP_PASSWORD` environment variabl
 2. Click **Connect** (top of the project page) → **Connection String** → choose **Transaction pooler** (port 6543; best for Vercel). Copy the URI, which looks like:
    `postgresql://postgres.xxxxxxxx:[YOUR-PASSWORD]@aws-0-region.pooler.supabase.com:6543/postgres`
    Replace `[YOUR-PASSWORD]` with your database password. If the password contains `@ : / ? # %`, replace those characters with `%40 %3A %2F %3F %23 %25`.
-3. In Vercel: **Settings → Environment Variables** → add `DATABASE_URL` = the URI from step 2.
-4. Redeploy (**Deployments** → **⋯** → **Redeploy**), or push a commit.
+3. Create the table: in Supabase open **SQL Editor** → **New query**, paste the contents of `db/schema.sql`, and click **Run**. (Optional: the app also creates it on first use.)
+4. In Vercel: **Settings → Environment Variables** → add `DATABASE_URL` = the URI from step 2.
+5. Redeploy (**Deployments** → **⋯** → **Redeploy**), or push a commit.
 
-The `analyses` table is created automatically the first time History is used. To see your data, open the Supabase project → **Table Editor** → `analyses`.
+The `analyses` table has one row per saved analysis (see the comments in `db/schema.sql`). Row Level Security is switched on so Supabase's public REST API can't read it; only the app's `/api/history` can. To see your data, open the Supabase project → **Table Editor** → `analyses`.
 
 Free plan notes: 500 MB of database storage, which holds roughly 2,000 saved analyses (each stores an annotated JPEG). Supabase pauses free projects after a week without use; open the Supabase dashboard and click **Restore** if History stops loading.
 
