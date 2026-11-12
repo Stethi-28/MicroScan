@@ -253,6 +253,7 @@ function enterSafeMode(reason){
   console.warn("Switching to compatibility mode:",reason);
   let already=false;try{already=localStorage.getItem(SAFE_KEY)==="1";localStorage.setItem(SAFE_KEY,"1");}catch(e){}
   if(SAFE||already){showMsg("Detection isn't working in this browser. "+esc(String(reason))+" Try updating the browser, or use Chrome or Edge.");return;}
+  try{sessionStorage.setItem("microscan-switched","1");}catch(e){}
   showMsg("Switching to compatibility mode for this browser…");
   setTimeout(()=>location.reload(),600);
 }
@@ -327,6 +328,8 @@ async function loadModel(url){
 }
 // Load the model once at startup; analysis waits for it.
 M.ready=loadModel(MODEL_URL);
+M.ready.then(()=>{try{if(sessionStorage.getItem("microscan-switched")){sessionStorage.removeItem("microscan-switched");
+  if(M.session)toast("Switched to compatibility mode for this browser. Choose your image again.");}}catch(e){}});
 // Remove a model remembered by older versions of this app.
 try{indexedDB.deleteDatabase("microplastic-bench");}catch(e){}
 
@@ -569,8 +572,15 @@ $("#hvDelete").onclick=async()=>{
 };
 document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;if(!$("#histView").hidden)closeView();else if(!$("#histPanel").hidden)closeHistory();});
 
-window.addEventListener("error",e=>{if(e.message&&!/ResizeObserver/.test(e.message))showMsg("Something went wrong: "+esc(e.message)+" Reload the page with Ctrl + Shift + R.");});
-window.addEventListener("unhandledrejection",e=>{const m=e.reason?.message||String(e.reason||"");if(m)showMsg("Something went wrong: "+esc(m)+" Reload the page with Ctrl + Shift + R.");});
+// Errors nobody caught. A failure while the model is starting (for example the multi-core workers can't start
+// in this browser, which shows up as "[object Event]") switches this browser to compatibility mode automatically.
+function onUncaught(msg){
+  if(!msg||/ResizeObserver/.test(msg))return;
+  if(!SAFE&&(!M.session||/\[object (Error)?Event\]/.test(msg))){enterSafeMode("The fast mode didn't start in this browser ("+msg+").");return;}
+  showMsg("Something went wrong: "+esc(msg)+" Reload the page with Ctrl + Shift + R.");
+}
+window.addEventListener("error",e=>onUncaught(e.message||(e.error&&e.error.message)||String(e.error||"")));
+window.addEventListener("unhandledrejection",e=>{const r=e.reason;onUncaught(r?.message||(r instanceof Event?"[object Event]":String(r||"")));});
 
 let toastT=null;function toast(t){let el=$(".toast");if(!el){el=document.createElement("div");el.className="toast";el.setAttribute("role","status");document.body.appendChild(el);}el.textContent=t;el.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>el.hidden=true,3800);}
 
