@@ -139,9 +139,16 @@ function drawAnnotated(ctx,sc,opts){
   else ctx.drawImage(src,0,0,W,H);
   if(S.outline&&(S.view.outline||S.view.mask))ctx.drawImage(S.outline,0,0);
   if(S.view.ids||opts.export){
-    const fs=Math.max(11,Math.round(W/95));ctx.font=`500 ${fs}px "IBM Plex Mono",monospace`;ctx.textBaseline="bottom";ctx.lineJoin="round";
-    for(const p of S.parts){const t=String(p.id);const x=Math.min(p.maxx+2,W-fs*1.8),y=Math.max(p.miny,fs);
-      ctx.lineWidth=Math.max(2.5,fs/4);ctx.strokeStyle="rgba(0,0,0,.8)";ctx.strokeText(t,x,y);ctx.fillStyle=p.excl?EXCL:CLS[p.cls].color;ctx.fillText(t,x,y);}
+    // Label on each particle: number, class and the model's confidence, e.g. "3 Fiber 87%".
+    const fs=Math.max(12,Math.round(Math.max(W,H)/50)),padX=Math.round(fs*0.35),h=Math.round(fs*1.35);
+    ctx.font=`600 ${fs}px "IBM Plex Mono",monospace`;ctx.textBaseline="middle";
+    for(const p of S.parts){
+      const c=CLS[p.cls],t=`${p.id} ${c?c.name:""} ${Math.round(p.conf*100)}%`;
+      const w=Math.ceil(ctx.measureText(t).width)+padX*2;
+      const x=Math.max(0,Math.min(p.minx,W-w)),y=p.miny-h-2>=0?p.miny-h-2:Math.min(p.maxy+2,H-h);
+      ctx.fillStyle=p.excl?EXCL:(c?c.color:"#9aa3a9");ctx.fillRect(x,y,w,h);
+      ctx.fillStyle="#0b1013";ctx.fillText(t,x+padX,y+h/2+1);
+    }
   }
   if(!opts.export&&S.sel>=0){const p=S.parts[S.sel],pad=Math.max(6,W/150);
     ctx.lineWidth=Math.max(2,W/400);ctx.strokeStyle="#ffffff";ctx.setLineDash([Math.max(4,W/150),Math.max(3,W/250)]);
