@@ -201,3 +201,7 @@ tbody tr.x td:first-child{text-decoration:none}
 .hcounts i{width:11px;height:11px;border-radius:3px;display:inline-block}
 .hcounts b{font-family:var(--f-mono);font-weight:500}
 .mfoot{display:flex;justify-content:flex-end;margin-top:12px}
+
+.readout .busy{display:flex;align-items:center;gap:8px;font-size:13px;color:#dfe7ea}
+.readout .busy .spin{width:14px;height:14px}
+.readout .busy em{font-style:normal;font-family:var(--f-mono)}

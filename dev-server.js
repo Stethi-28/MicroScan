@@ -87,6 +87,7 @@ http
       res.writeHead(200, {
         "Content-Type": TYPES[path.extname(file).toLowerCase()] || "application/octet-stream",
         "Cache-Control": "no-cache",
+        "Content-Length": data.length,
         // Cross-origin isolation lets the model use several processor cores (same headers as vercel.json).
         "Cross-Origin-Opener-Policy": "same-origin",
         "Cross-Origin-Embedder-Policy": "credentialless",

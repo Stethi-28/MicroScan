@@ -50,7 +50,7 @@ const COLOR_SW={"black":"#1b1b1b","white / clear":"#f3f3f0","grey":"#8c8c8c","re
 function analyze(){
   if(!S.base)return Promise.resolve();
   return M.ready.then(()=>M.session?analyzeYolo():undefined).catch(e=>{
-    console.error(e);
+    console.error(e);$("#readout").innerHTML="";
     showMsg("Detection failed: "+esc(e?.message||String(e))+" Reload the page with Ctrl + Shift + R and try again.");
   });
 }
@@ -210,6 +210,14 @@ function loadFrom(src,w,h,name,example,maxDim){
   const c=document.createElement("canvas");c.width=W;c.height=H;const x=c.getContext("2d",{willReadFrequently:true});x.drawImage(src,0,0,W,H);
   S.base=c;S.W=W;S.H=H;S.rgba=x.getImageData(0,0,W,H).data;S.scale=w/W;S.origW=w;S.origH=h;S.name=name;S.example=example;
   $("#imgName").textContent=name;view.hidden=false;$("#stage").hidden=false;
+  if(!S.live){
+    // Show the photo straight away; outlines and counts appear when the analysis finishes.
+    S.parts=[];S.lab=null;S.labIdx=null;S.sel=-1;
+    if(S.outline){S.outline.width=W;S.outline.height=H;}
+    drawView();
+    $("#readout").innerHTML=`<div class="busy"><span class="spin"></span>${M.session?"Analysing…":`Loading the model…<em>${M.loadPct?" "+M.loadPct+"%":""}</em>`}</div>`;
+    $("#btnSave").hidden=true;
+  }
   return analyze();
 }
 function loadFile(file){
@@ -254,7 +262,7 @@ const MODEL_URL="model/yolo11s.onnx";
 const NAMED={fiber:"#ff2e88",fibre:"#ff2e88",filament:"#b18cff",film:"#29d3f0",fragment:"#ffb020",granule:"#9be15d",pellet:"#9be15d",bead:"#9be15d",foam:"#ff7a45",microbead:"#9be15d"};
 const PALETTE=["#ff2e88","#ffb020","#29d3f0","#9be15d","#b18cff","#ff7a45","#4dabf7","#f783ac","#ffd43b","#69db7c","#e599f7","#63e6be"];
 // conf: minimum confidence for a detection (0.25 = YOLO default). iou: overlap for merging duplicates.
-const M={ready:null,session:null,name:"",task:"detect",names:[],imgsz:640,conf:0.25,iou:0.45,tok:0,lb:null};
+const M={ready:null,loadPct:0,session:null,name:"",task:"detect",names:[],imgsz:640,conf:0.25,iou:0.45,tok:0,lb:null};
 // Processor with several cores by default (graphics card only with ?gpu=1); one core in compatibility mode.
 // when the page is cross-origin isolated (the server sends the COOP/COEP headers, see vercel.json).
 let WANT_GPU=false;
@@ -310,7 +318,16 @@ async function loadModel(url){
     await ensureOrt();
     const r=await fetch(url);
     if(!r.ok)throw new Error(`${url} was not found. Check that the file is in the model folder.`);
-    const buf=await r.arrayBuffer();
+    // Download with progress, shown while a photo waits for the model.
+    const total=+r.headers.get("content-length")||0;let buf;
+    if(total&&r.body&&r.body.getReader){
+      const reader=r.body.getReader(),all=new Uint8Array(total);let got=0;
+      for(;;){const {done,value}=await reader.read();if(done)break;
+        if(got+value.length>all.length){buf=null;break;}all.set(value,got);got+=value.length;
+        M.loadPct=Math.floor(got/total*100);const el=document.querySelector("#readout .busy em");if(el)el.textContent=` ${M.loadPct}%`;}
+      buf=got===total?all.buffer:null;
+    }
+    if(!buf){const r2=await fetch(url);buf=await r2.arrayBuffer();}
     const meta=onnxMeta(buf);
     const isz=(meta.imgsz||"").match(/\d+/g);const imgsz=isz?+isz[0]:640;
     let sess=null,out=null;M.backend="cpu";
