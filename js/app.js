@@ -242,7 +242,7 @@ const NAMED={fiber:"#ff2e88",fibre:"#ff2e88",filament:"#b18cff",film:"#29d3f0",f
 const PALETTE=["#ff2e88","#ffb020","#29d3f0","#9be15d","#b18cff","#ff7a45","#4dabf7","#f783ac","#ffd43b","#69db7c","#e599f7","#63e6be"];
 // conf: minimum confidence for a detection (0.25 = YOLO default). iou: overlap for merging duplicates.
 const M={ready:null,session:null,name:"",task:"detect",names:[],imgsz:640,conf:0.25,iou:0.45,tok:0,lb:null};
-// WebGPU (graphics card) when the browser supports it; otherwise the processor, using several cores
+// Processor with several cores by default (graphics card only with ?gpu=1); one core in compatibility mode.
 // when the page is cross-origin isolated (the server sends the COOP/COEP headers, see vercel.json).
 let WANT_GPU=false;
 // Compatibility mode: no graphics card, one processor core. Used automatically on a device where the
@@ -261,7 +261,10 @@ function withTimeout(p,ms,what){let t;return Promise.race([p,new Promise((_,rej)
 async function ensureOrt(){
   if(window.ort)return;
   // Only load the (larger) WebGPU runtime when the computer actually has a usable graphics adapter.
-  if(!SAFE){try{WANT_GPU=!!(navigator.gpu&&await withTimeout(navigator.gpu.requestAdapter(),5000,"Finding the graphics card"));}catch(e){WANT_GPU=false;}}
+  // The graphics card (WebGPU) is opt-in with ?gpu=1: on some laptops and phones it runs but gives wrong
+  // or no detections, so the default is the processor with several cores, which works everywhere.
+  const askGpu=new URLSearchParams(location.search).has("gpu");
+  if(!SAFE&&askGpu){try{WANT_GPU=!!(navigator.gpu&&await withTimeout(navigator.gpu.requestAdapter(),5000,"Finding the graphics card"));}catch(e){WANT_GPU=false;}}
   return new Promise((res,rej)=>{const sc=document.createElement("script");sc.src=ORT_BASE+(WANT_GPU?"ort.webgpu.min.js":"ort.wasm.min.js");sc.onload=()=>{
       ort.env.wasm.numThreads=(!SAFE&&self.crossOriginIsolated)?Math.max(1,Math.min(4,(navigator.hardwareConcurrency||2)-1)):1;
       ort.env.wasm.wasmPaths=ORT_BASE;res();};

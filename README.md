@@ -54,7 +54,9 @@ The YOLO11 model loads automatically when the app opens. An image uploaded befor
 ## Live speed
 
 - The camera picture is redrawn at the screen's frame rate; the outlines update each time the model finishes a frame, so they can trail fast movement slightly. The badge shows **detections/s**.
-- The model runs on the **graphics card (WebGPU)** when the browser supports it (recent Chrome/Edge on most computers), otherwise on the **processor using several cores**. The browser console (F12) says which one is used.
+- The model runs on the **processor using several cores**. The browser console (F12) says which mode is used.
+- Add `?gpu=1` to the address to try the **graphics card (WebGPU)**; on some laptops and phones it gives wrong or no results, so it is off by default.
+- If detection fails or freezes, the app switches that browser to **compatibility mode** (one core). Force it with `?safe=1`; turn it off again with `?fast=1`.
 - Multi-core needs the `Cross-Origin-Opener-Policy` / `Cross-Origin-Embedder-Policy` headers; `vercel.json` and `dev-server.js` send them.
 - For more speed, a YOLO11**n** model or exporting at a smaller size (`imgsz=480`) helps, at some cost in accuracy.
 
