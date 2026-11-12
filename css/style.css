@@ -92,7 +92,7 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 .livebadge i{width:9px;height:9px;border-radius:50%;background:var(--live);animation:pulse 1.2s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.25}}
 @media (prefers-reduced-motion:reduce){.livebadge i{animation:none}}
-@media (max-width:520px){.readout{left:6px;top:6px;padding:5px 8px;flex-direction:row;align-items:center;gap:8px}.readout .total b{font-size:18px}.readout .total span{display:none}.readout ul{flex-direction:row;gap:8px;font-size:11px}.readout li{display:flex;gap:4px}.readout li i{width:9px;height:9px}.readout li{font-size:0}.readout li b{font-size:11px}.tb span{display:none}.tb{padding:0 12px}}
+@media (max-width:520px){.readout{left:6px;top:6px;padding:6px 9px;gap:4px;max-width:calc(100% - 12px)}.readout .total b{font-size:20px}.readout .total span{font-size:11px}.readout ul{flex-direction:row;flex-wrap:wrap;gap:3px 10px;font-size:12px}.readout li{display:flex;align-items:center;gap:5px}.readout li i{width:9px;height:9px}.tb span{display:none}.tb{padding:0 12px}}
 /* Stage */
 .stage{flex:1;min-height:320px;background:var(--stage);border-radius:8px;overflow:hidden;border:1px solid var(--line);display:flex;flex-direction:column}
 .stage-bar{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;padding:8px 12px;color:#c9d6db;font-size:12px;font-family:var(--f-mono);background:rgba(255,255,255,.04);border-bottom:1px solid rgba(255,255,255,.08)}

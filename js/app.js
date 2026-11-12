@@ -142,10 +142,16 @@ function drawAnnotated(ctx,sc,opts){
     // Label on each particle: number, class and the model's confidence, e.g. "3 Fiber 87%".
     const fs=Math.max(12,Math.round(Math.max(W,H)/50)),padX=Math.round(fs*0.35),h=Math.round(fs*1.35);
     ctx.font=`600 ${fs}px "IBM Plex Mono",monospace`;ctx.textBaseline="middle";
+    const placed=[];
     for(const p of S.parts){
       const c=CLS[p.cls],t=`${p.id} ${c?c.name:""} ${Math.round(p.conf*100)}%`;
       const w=Math.ceil(ctx.measureText(t).width)+padX*2;
-      const x=Math.max(0,Math.min(p.minx,W-w)),y=p.miny-h-2>=0?p.miny-h-2:Math.min(p.maxy+2,H-h);
+      // Above the particle if there is room, else below; move further if it would cover another label.
+      const x=Math.max(0,Math.min(p.minx,W-w));
+      const tries=[p.miny-h-2,p.maxy+2];for(let k=1;k<=4;k++)tries.push(p.miny-h-2-k*(h+2),p.maxy+2+k*(h+2));
+      const hit=(yy)=>yy<0||yy+h>H||placed.some(r=>x<r.x+r.w&&x+w>r.x&&yy<r.y+r.h&&yy+h>r.y);
+      let y=tries.find(yy=>!hit(yy));if(y===undefined)y=Math.max(0,Math.min(p.miny-h-2,H-h));
+      placed.push({x,y,w,h});
       ctx.fillStyle=p.excl?EXCL:(c?c.color:"#9aa3a9");ctx.fillRect(x,y,w,h);
       ctx.fillStyle="#0b1013";ctx.fillText(t,x+padX,y+h/2+1);
     }
@@ -275,7 +281,10 @@ async function ensureOrt(){
   if(!SAFE&&askGpu){try{WANT_GPU=!!(navigator.gpu&&await withTimeout(navigator.gpu.requestAdapter(),5000,"Finding the graphics card"));}catch(e){WANT_GPU=false;}}
   return new Promise((res,rej)=>{const sc=document.createElement("script");sc.src=ORT_BASE+(WANT_GPU?"ort.webgpu.min.js":"ort.wasm.min.js");sc.onload=()=>{
       ort.env.wasm.numThreads=(!SAFE&&self.crossOriginIsolated)?Math.max(1,Math.min(4,(navigator.hardwareConcurrency||2)-1)):1;
-      ort.env.wasm.wasmPaths=ORT_BASE;res();};
+      ort.env.wasm.wasmPaths=ORT_BASE;
+      // Run the model in a background worker so the page (and the live camera picture) never freezes while it works.
+      if(!WANT_GPU)ort.env.wasm.proxy=true;
+      res();};
     sc.onerror=()=>rej(new Error("The model runtime couldn't be loaded. Check that vendor/onnxruntime-web/ is next to index.html and that the app is opened through a local server (npm start)."));document.head.appendChild(sc);});
 }
 function onnxMeta(buf){
