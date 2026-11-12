@@ -130,8 +130,10 @@ function buildOutline(){
 function drawAnnotated(ctx,sc,opts){
   const {W,H}=S;
   ctx.save();ctx.scale(sc,sc);
-  if(S.view.mask&&!opts.export){ctx.fillStyle="#0b1114";ctx.fillRect(0,0,W,H);ctx.globalAlpha=0.35;ctx.drawImage(S.base,0,0);ctx.globalAlpha=1;}
-  else ctx.drawImage(S.base,0,0);
+  // In live mode the screen shows the current camera frame; the outlines come from the most recent detection.
+  const vid=$("#video"),src=(S.live&&!opts.export&&vid.videoWidth)?vid:S.base;
+  if(S.view.mask&&!opts.export){ctx.fillStyle="#0b1114";ctx.fillRect(0,0,W,H);ctx.globalAlpha=0.35;ctx.drawImage(src,0,0,W,H);ctx.globalAlpha=1;}
+  else ctx.drawImage(src,0,0,W,H);
   if(S.outline&&(S.view.outline||S.view.mask))ctx.drawImage(S.outline,0,0);
   if(S.view.ids||opts.export){
     const fs=Math.max(11,Math.round(W/95));ctx.font=`500 ${fs}px "IBM Plex Mono",monospace`;ctx.textBaseline="bottom";ctx.lineJoin="round";
@@ -180,8 +182,9 @@ function refresh(rebuild){
   const u=S.umPerPx*S.scale;
   if(S.base){const inc=included(),cnt={};for(const k in CLS)cnt[k]=0;for(const p of inc)cnt[p.cls]++;
     $("#readout").innerHTML=`<div class="total"><b>${inc.length}</b><span>${inc.length===1?"particle":"particles"}</span></div><ul>${Object.entries(CLS).filter(([k])=>Object.keys(CLS).length<=6||cnt[k]>0).map(([k,v])=>`<li><i style="background:${v.color}"></i>${v.name}<b>${cnt[k]}</b></li>`).join("")}</ul>`;
-    $("#fps").textContent=S.live&&fps?fps.toFixed(0)+" fps":"";}
+    $("#fps").textContent=S.live&&fps?`· ${fps<10?fps.toFixed(1):fps.toFixed(0)} detections/s`:"";}
   const has=!!S.base&&!S.live;
+  $("#btnSave").hidden=!(has&&M.session);
 
 }
 
@@ -236,10 +239,16 @@ const NAMED={fiber:"#ff2e88",fibre:"#ff2e88",filament:"#b18cff",film:"#29d3f0",f
 const PALETTE=["#ff2e88","#ffb020","#29d3f0","#9be15d","#b18cff","#ff7a45","#4dabf7","#f783ac","#ffd43b","#69db7c","#e599f7","#63e6be"];
 // conf: minimum confidence for a detection (0.25 = YOLO default). iou: overlap for merging duplicates.
 const M={ready:null,session:null,name:"",task:"detect",names:[],imgsz:640,conf:0.25,iou:0.45,tok:0,lb:null};
-function ensureOrt(){
-  if(window.ort)return Promise.resolve();
-  return new Promise((res,rej)=>{const sc=document.createElement("script");sc.src=ORT_BASE+"ort.wasm.min.js";sc.onload=()=>{
-      ort.env.wasm.numThreads=1;ort.env.wasm.wasmPaths=ORT_BASE;res();};
+// WebGPU (graphics card) when the browser supports it; otherwise the processor, using several cores
+// when the page is cross-origin isolated (the server sends the COOP/COEP headers, see vercel.json).
+let WANT_GPU=false;
+async function ensureOrt(){
+  if(window.ort)return;
+  // Only load the (larger) WebGPU runtime when the computer actually has a usable graphics adapter.
+  try{WANT_GPU=!!(navigator.gpu&&await navigator.gpu.requestAdapter());}catch(e){WANT_GPU=false;}
+  return new Promise((res,rej)=>{const sc=document.createElement("script");sc.src=ORT_BASE+(WANT_GPU?"ort.webgpu.min.js":"ort.wasm.min.js");sc.onload=()=>{
+      ort.env.wasm.numThreads=self.crossOriginIsolated?Math.max(1,Math.min(4,(navigator.hardwareConcurrency||2)-1)):1;
+      ort.env.wasm.wasmPaths=ORT_BASE;res();};
     sc.onerror=()=>rej(new Error("The model runtime couldn't be loaded. Check that vendor/onnxruntime-web/ is next to index.html and that the app is opened through a local server (npm start)."));document.head.appendChild(sc);});
 }
 function onnxMeta(buf){
@@ -267,7 +276,13 @@ async function loadModel(url){
     if(!r.ok)throw new Error(`${url} was not found. Check that the file is in the model folder.`);
     const buf=await r.arrayBuffer();
     const meta=onnxMeta(buf);
-    const sess=await ort.InferenceSession.create(new Uint8Array(buf),{executionProviders:["wasm"],graphOptimizationLevel:"all"});
+    let sess=null;M.backend="cpu";
+    if(WANT_GPU){
+      try{sess=await ort.InferenceSession.create(new Uint8Array(buf),{executionProviders:["webgpu"],graphOptimizationLevel:"all"});M.backend="gpu";}
+      catch(e){console.info("WebGPU couldn't run the model; using the processor instead.");sess=null;}
+    }
+    if(!sess)sess=await ort.InferenceSession.create(new Uint8Array(buf),{executionProviders:["wasm"],graphOptimizationLevel:"all"});
+    console.info(`YOLO11 running on ${M.backend==="gpu"?"the graphics card (WebGPU)":`the processor (${ort.env.wasm.numThreads} thread${ort.env.wasm.numThreads>1?"s":""})`}.`);
     const isz=(meta.imgsz||"").match(/\d+/g);const imgsz=isz?+isz[0]:640;
     const dummy=new ort.Tensor("float32",new Float32Array(3*imgsz*imgsz),[1,3,imgsz,imgsz]);
     const out=await sess.run({[sess.inputNames[0]]:dummy});
@@ -290,6 +305,9 @@ M.ready=loadModel(MODEL_URL);
 // Remove a model remembered by older versions of this app.
 try{indexedDB.deleteDatabase("microplastic-bench");}catch(e){}
 
+// One model run at a time: a new run (e.g. Freeze or Upload during live) waits for the current one.
+let runChain=Promise.resolve();
+function runModel(sess,feeds){const p=runChain.then(()=>sess.run(feeds));runChain=p.catch(()=>{});return p;}
 async function analyzeYolo(){
   const tok=++M.tok,t0=performance.now();
   const {W,H}=S,sz=M.imgsz,r=Math.min(sz/W,sz/H),nw=Math.round(W*r),nh=Math.round(H*r);
@@ -299,7 +317,7 @@ async function analyzeYolo(){
   const px=x.getImageData(0,0,sz,sz).data,N=sz*sz,f=new Float32Array(3*N);
   for(let i=0,j=0;i<N;i++,j+=4){f[i]=px[j]/255;f[i+N]=px[j+1]/255;f[i+2*N]=px[j+2]/255;}
   const sess=M.session;
-  const out=await sess.run({[sess.inputNames[0]]:new ort.Tensor("float32",f,[1,3,sz,sz])});
+  const out=await runModel(sess,{[sess.inputNames[0]]:new ort.Tensor("float32",f,[1,3,sz,sz])});
   if(tok!==M.tok||sess!==M.session)return;
   const o0=out[sess.outputNames[0]],C=o0.dims[1],A=o0.dims[2],d=o0.data,seg=M.task==="segment",nm=seg?32:0,nc=C-4-nm;
   // candidates above threshold
@@ -356,6 +374,7 @@ async function startLive(deviceId){
     stream=await navigator.mediaDevices.getUserMedia({audio:false,video:deviceId?{deviceId:{exact:deviceId},width:{ideal:1920},height:{ideal:1080}}:{facingMode:"environment",width:{ideal:1920},height:{ideal:1080}}});
     const v=$("#video");v.srcObject=stream;await v.play();
     S.live=true;S.example=false;$("#liveTag").hidden=false;$("#liveCtl").hidden=false;$("#btnLive").classList.replace("primary","stop");$("#btnLive").innerHTML=STOP_BTN;
+    cancelAnimationFrame(liveRaf);liveRaf=requestAnimationFrame(liveDraw);
     try{const devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput");const sel=$("#camSel");const cur=stream.getVideoTracks()[0]?.getSettings().deviceId;
       sel.innerHTML=devs.map((d,i)=>`<option value="${esc(d.deviceId)}"${d.deviceId===cur?" selected":""}>${esc(d.label||"Camera "+(i+1))}</option>`).join("");$("#camPick").hidden=devs.length<2;}catch(e){}
     clearTimeout(liveTimer);liveTick();
@@ -365,15 +384,19 @@ async function startLive(deviceId){
     msg.hidden=false;
   }
 }
+// Detection loop: analyses the newest camera frame, then immediately the next one.
 async function liveTick(){
   if(!S.live)return;const v=$("#video");const t0=performance.now();
   if(v.videoWidth){try{await loadFrom(v,v.videoWidth,v.videoHeight,"Live camera",false,960);}catch(e){}
     if(!S.live)return;
     fpsN++;if(t0-fpsT>1000){fps=fpsN*1000/(t0-fpsT);fpsN=0;fpsT=t0;}}
-  const took=performance.now()-t0;liveTimer=setTimeout(liveTick,Math.max(30,took*0.5));
+  liveTimer=setTimeout(liveTick,10);
 }
+// Display loop: redraws the camera picture at the screen's frame rate, independent of detection speed.
+let liveRaf=0;
+function liveDraw(){if(!S.live)return;if(S.base)drawView();liveRaf=requestAnimationFrame(liveDraw);}
 function stopLive(){
-  if(!S.live&&!stream)return;S.live=false;clearTimeout(liveTimer);
+  if(!S.live&&!stream)return;S.live=false;clearTimeout(liveTimer);cancelAnimationFrame(liveRaf);
   if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
   $("#liveTag").hidden=true;$("#liveCtl").hidden=true;$("#camPick").hidden=true;$("#btnLive").classList.replace("stop","primary");$("#btnLive").innerHTML=LIVE_BTN;refresh(false);
 }
@@ -418,6 +441,99 @@ const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",
 /* ---------- capabilities ---------- */
 function initCaps(){}
 /* ---------- misc ---------- */
+/* ---------- history (saved on the server via /api/history) ---------- */
+const API="api/history";
+const KEY_STORE="microscan-key";
+function getKey(){try{return localStorage.getItem(KEY_STORE)||"";}catch(e){return"";}}
+function setKey(k){try{k?localStorage.setItem(KEY_STORE,k):localStorage.removeItem(KEY_STORE);}catch(e){}}
+async function api(method,query,body){
+  const headers={};const k=getKey();if(k)headers["x-app-key"]=k;if(body)headers["content-type"]="application/json";
+  let r;
+  try{r=await fetch(API+(query||""),{method,headers,body:body?JSON.stringify(body):undefined});}
+  catch(e){throw new Error("The server can't be reached. Check your connection.");}
+  if(r.status===401){const e=new Error("Passcode required.");e.code=401;throw e;}
+  let data={};try{data=await r.json();}catch(e){}
+  if(!r.ok){
+    if(r.status===404&&!data.error)throw new Error("The history service isn't running. Start the app with npm start (or deploy to Vercel).");
+    throw new Error(data.error||("Server error "+r.status+"."));
+  }
+  return data;
+}
+const swatch=name=>{const c=Object.values(CLS).find(v=>v.name===name);return c?c.color:"#9aa3a9";};
+// Counts in the model's class order (the database may store keys in another order).
+function orderedCounts(counts){const c=counts||{},names=Object.values(CLS).map(v=>v.name);
+  return [...names.filter(n=>n in c),...Object.keys(c).filter(n=>!names.includes(n))].map(n=>[n,c[n]]);}
+function countsText(counts){return orderedCounts(counts).map(([k,v])=>`${k} ${v}`).join(" · ");}
+
+let saving=false;
+async function saveCurrent(){
+  if(!S.base||S.live||!M.session||saving)return;
+  saving=true;const btn=$("#btnSave");btn.disabled=true;
+  try{
+    const inc=included(),counts={};
+    for(const k in CLS)counts[CLS[k].name]=0;
+    for(const p of inc)counts[CLS[p.cls].name]++;
+    const particles=inc.map(p=>{const m=um(p);return{id:p.id,class:CLS[p.cls].name,confidence:+p.conf.toFixed(3),
+      x_px:Math.round(p.cx*S.scale),y_px:Math.round(p.cy*S.scale),length_um:+m.len.toFixed(1),width_um:+m.wid.toFixed(1),area_um2:Math.round(m.area)};});
+    const image=annotatedCanvas(1280).toDataURL("image/jpeg",0.82);
+    const thumb=annotatedCanvas(240).toDataURL("image/jpeg",0.7);
+    await api("POST","",{image_name:S.name,model:M.name,um_per_px:S.umPerPx,total:inc.length,counts,particles,thumb,image});
+    toast("Saved to history");
+    if(!$("#histPanel").hidden)loadHistory();
+  }catch(e){
+    if(e.code===401){openHistory();showAuth(false);toast("Enter the passcode, then press Save again.");}
+    else toast("Couldn't save. "+e.message);
+  }
+  saving=false;btn.disabled=false;
+}
+function showAuth(wrong){$("#histAuth").hidden=false;$("#authErr").hidden=!wrong;$("#histList").innerHTML="";$("#histMsg").textContent="";setTimeout(()=>$("#authPass").focus(),0);}
+async function loadHistory(){
+  const list=$("#histList"),msg=$("#histMsg");
+  $("#histAuth").hidden=true;msg.textContent="Loading…";
+  try{
+    const {items}=await api("GET");
+    msg.textContent=items.length?`${items.length} saved`:"Nothing saved yet. Analyse an image, then press Save.";
+    list.innerHTML=items.map(it=>`<button class="hcard" type="button" data-id="${+it.id}">
+      <img src="${esc(it.thumb)}" alt="">
+      <span><b>${esc(it.image_name||"Image")}</b><small>${esc(new Date(it.created_at).toLocaleString())}</small>
+      <small>${+it.total} particles${it.total?" · "+esc(countsText(it.counts)):""}</small></span></button>`).join("");
+  }catch(e){
+    list.innerHTML="";
+    if(e.code===401){showAuth(!!getKey());}
+    else msg.textContent="History couldn't be loaded. "+e.message;
+  }
+}
+function openHistory(){$("#histPanel").hidden=false;loadHistory();}
+function closeHistory(){$("#histPanel").hidden=true;$("#btnHistory").focus();}
+$("#btnSave").onclick=saveCurrent;
+$("#btnHistory").onclick=()=>$("#histPanel").hidden?openHistory():closeHistory();
+$("#histClose").onclick=closeHistory;
+$("#histAuth").addEventListener("submit",e=>{e.preventDefault();const v=$("#authPass").value.trim();if(!v)return;setKey(v);$("#authPass").value="";loadHistory();});
+let viewing=null;
+$("#histList").addEventListener("click",async e=>{
+  const card=e.target.closest(".hcard");if(!card)return;
+  const id=+card.dataset.id;
+  try{
+    const it=await api("GET","?id="+id);viewing=it;
+    $("#hvTitle").textContent=it.image_name||"Image";
+    $("#hvMeta").textContent=`${new Date(it.created_at).toLocaleString()}${it.model?" · "+it.model:""}`;
+    $("#hvImg").src=it.image;
+    $("#hvCounts").innerHTML=`<li><b>${+it.total}</b> particles</li>`+orderedCounts(it.counts).map(([k,v])=>`<li><i style="background:${swatch(k)}"></i>${esc(k)} <b>${+v}</b></li>`).join("");
+    const del=$("#hvDelete");del.classList.remove("armed");del.textContent="Delete";
+    $("#histView").hidden=false;$("#hvClose").focus();
+  }catch(err){if(err.code===401)showAuth(true);else toast("Couldn't open it. "+err.message);}
+});
+function closeView(){$("#histView").hidden=true;viewing=null;$("#hvImg").removeAttribute("src");}
+$("#hvClose").onclick=closeView;
+$("#histView").addEventListener("click",e=>{if(e.target.id==="histView")closeView();});
+$("#hvDelete").onclick=async()=>{
+  const del=$("#hvDelete");if(!viewing)return;
+  if(!del.classList.contains("armed")){del.classList.add("armed");del.textContent="Confirm delete";return;}
+  try{await api("DELETE","?id="+viewing.id);closeView();toast("Deleted");loadHistory();}
+  catch(e){toast("Couldn't delete. "+e.message);}
+};
+document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;if(!$("#histView").hidden)closeView();else if(!$("#histPanel").hidden)closeHistory();});
+
 let toastT=null;function toast(t){let el=$(".toast");if(!el){el=document.createElement("div");el.className="toast";el.setAttribute("role","status");document.body.appendChild(el);}el.textContent=t;el.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>el.hidden=true,3800);}
 
 legend();refresh(false);

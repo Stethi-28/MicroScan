@@ -18,6 +18,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg><span>Freeze</span></button></span>
     <button class="tb" id="btnUpload" type="button" title="Analyse an image file">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span>Upload</span></button>
+    <button class="tb" id="btnSave" type="button" title="Save this result to history" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3h11l3 3v15H5z"/><path d="M8 3v6h8V3M8 21v-7h8v7"/></svg><span>Save</span></button>
+    <button class="tb" id="btnHistory" type="button" title="Saved analyses">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>History</span></button>
     <label id="camPick" hidden><select id="camSel" aria-label="Camera"></select></label>
     <input type="file" id="inUpload" accept="image/*" multiple hidden>
     <video id="video" playsinline muted hidden></video>
@@ -38,6 +42,24 @@
     <span id="imgName" hidden></span>
   </div>
 </main>
+<aside class="drawer" id="histPanel" hidden aria-labelledby="histTitle">
+  <header class="drawer-head"><h2 id="histTitle">History</h2><button class="tb icon" id="histClose" type="button" aria-label="Close history">×</button></header>
+  <form class="auth" id="histAuth" hidden>
+    <label for="authPass">Passcode</label>
+    <div class="auth-row"><input type="password" id="authPass" autocomplete="current-password" required><button class="tb primary" type="submit">Unlock</button></div>
+    <p class="err" id="authErr" hidden>Wrong passcode. Try again.</p>
+  </form>
+  <p class="hmsg" id="histMsg"></p>
+  <div class="hlist" id="histList"></div>
+</aside>
+<div class="modal" id="histView" hidden role="dialog" aria-modal="true" aria-labelledby="hvTitle">
+  <div class="mbox">
+    <header class="drawer-head"><div><h2 id="hvTitle"></h2><p class="hmeta" id="hvMeta"></p></div><button class="tb icon" id="hvClose" type="button" aria-label="Close">×</button></header>
+    <img id="hvImg" alt="Saved annotated image">
+    <ul class="hcounts" id="hvCounts"></ul>
+    <div class="mfoot"><button class="tb danger" id="hvDelete" type="button">Delete</button></div>
+  </div>
+</div>
 <div class="drop" id="drop" hidden>Drop image to analyze</div>
 <script src="js/app.js"></script>
 </body>
