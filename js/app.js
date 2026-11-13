@@ -312,22 +312,71 @@ function buildModelClasses(){
   CLS=c;
 }
 function showMsg(html){const m=$("#liveMsg");m.innerHTML=html;m.hidden=!html;}
+/* ---------- model download: in pieces with retries, kept in the browser's cache ---------- */
+const MODEL_CACHE="microscan-model";
+function setLoadPct(p){M.loadPct=p;const el=document.querySelector("#readout .busy em");if(el)el.textContent=` ${p}%`;}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function fetchRetry(url,opts,tries=5){
+  let last;
+  for(let i=0;i<tries;i++){
+    try{const r=await fetch(url,{cache:"no-store",...opts});if(r.ok||r.status===206)return r;
+      if(r.status===404)throw Object.assign(new Error(`${url} was not found. Check that the file is in the model folder.`),{fatal:true});
+      last=new Error("Server error "+r.status);}
+    catch(e){if(e.fatal)throw e;last=e;}
+    await sleep(800*2**i);
+  }
+  throw new Error("The model download keeps failing ("+(last?.message||"network error")+"). Check the internet connection, then press Retry.");
+}
+async function downloadModel(url){
+  let cache=null;try{if(self.caches)cache=await caches.open(MODEL_CACHE);}catch(e){}
+  // Ask for the first byte to learn the size and version (ETag) of the model on the server.
+  let total=0,tag="",ranges=false,whole=null;
+  try{
+    const probe=await fetchRetry(url,{headers:{Range:"bytes=0-0"}},3);
+    const cr=probe.headers.get("content-range");
+    ranges=probe.status===206&&!!cr;
+    if(ranges){total=+cr.split("/")[1];tag=probe.headers.get("etag")||String(total);try{await probe.arrayBuffer();}catch(e){}}
+    else{whole=await probe.arrayBuffer();total=whole.byteLength;tag=probe.headers.get("etag")||String(total);} // server sent the whole file
+  }catch(e){
+    // Offline or server unreachable: use the saved copy if there is one.
+    const any=cache&&await cache.match(url,{ignoreSearch:true});
+    if(any){setLoadPct(100);return any.arrayBuffer();}
+    throw e;
+  }
+  const key=url+"?v="+encodeURIComponent(tag);
+  if(cache){try{const hit=await cache.match(key);if(hit){const b=await hit.arrayBuffer();if(b.byteLength===total||!total){setLoadPct(100);return b;}}}catch(e){}}
+  let buf;
+  if(whole){buf=whole;setLoadPct(100);}
+  else if(ranges&&total){
+    // Download in 4 MB pieces; a dropped connection only repeats one piece.
+    const all=new Uint8Array(total),PIECE=4*1024*1024;
+    for(let s=0;s<total;s+=PIECE){
+      const e=Math.min(total,s+PIECE)-1;
+      const r=await fetchRetry(url,{headers:{Range:`bytes=${s}-${e}`}});
+      const part=new Uint8Array(await r.arrayBuffer());
+      if(r.status===200&&part.length===total){all.set(part);break;} // server ignored the range: got the whole file
+      if(part.length!==e-s+1)throw new Error("The model download was incomplete. Press Retry.");
+      all.set(part,s);setLoadPct(Math.floor((e+1)/total*100));
+    }
+    buf=all.buffer;
+  }else{
+    const r=await fetchRetry(url);buf=await r.arrayBuffer();setLoadPct(100);
+  }
+  if(cache){try{for(const k of await cache.keys())if(k.url.split("?")[0].endsWith(url.split("/").pop()))await cache.delete(k);
+    await cache.put(key,new Response(buf,{headers:{"Content-Type":"application/octet-stream"}}));}catch(e){}}
+  return buf;
+}
+function retryModel(){
+  showMsg("");M.loadPct=0;
+  M.ready=loadModel(MODEL_URL);
+  if(S.base&&!S.live){$("#readout").innerHTML=`<div class="busy"><span class="spin"></span>Loading the model…<em></em></div>`;analyze();}
+}
+
 async function loadModel(url){
   showMsg("");
   try{
     await ensureOrt();
-    const r=await fetch(url);
-    if(!r.ok)throw new Error(`${url} was not found. Check that the file is in the model folder.`);
-    // Download with progress, shown while a photo waits for the model.
-    const total=+r.headers.get("content-length")||0;let buf;
-    if(total&&r.body&&r.body.getReader){
-      const reader=r.body.getReader(),all=new Uint8Array(total);let got=0;
-      for(;;){const {done,value}=await reader.read();if(done)break;
-        if(got+value.length>all.length){buf=null;break;}all.set(value,got);got+=value.length;
-        M.loadPct=Math.floor(got/total*100);const el=document.querySelector("#readout .busy em");if(el)el.textContent=` ${M.loadPct}%`;}
-      buf=got===total?all.buffer:null;
-    }
-    if(!buf){const r2=await fetch(url);buf=await r2.arrayBuffer();}
+    const buf=await downloadModel(url);
     const meta=onnxMeta(buf);
     const isz=(meta.imgsz||"").match(/\d+/g);const imgsz=isz?+isz[0]:640;
     let sess=null,out=null;M.backend="cpu";
@@ -357,6 +406,9 @@ async function loadModel(url){
     const local=location.protocol==="file:";
     let why=esc(e?.message||String(e));if(!/[.!?]$/.test(why))why+=".";
     showMsg("The YOLO11 model couldn't be loaded. "+why+(local?" Open the app through the local server (run <code>npm start</code>, then go to http://localhost:5173) instead of opening index.html directly.":""));
+    $("#readout").innerHTML="";
+    $("#liveMsg").insertAdjacentHTML("beforeend",' <button class="tb" id="btnRetry" type="button" style="height:32px;display:inline-flex;margin-left:6px">Retry</button>');
+    $("#btnRetry").onclick=retryModel;
   }
 }
 // Load the model once at startup; analysis waits for it.
