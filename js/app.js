@@ -51,7 +51,7 @@ function analyze(){
   if(!S.base)return Promise.resolve();
   return M.ready.then(()=>M.session?analyzeYolo():undefined).catch(e=>{
     console.error(e);$("#readout").innerHTML="";
-    showMsg("Detection failed: "+esc(e?.message||String(e))+" Reload the page with Ctrl + Shift + R and try again.");
+    if(S.base&&!S.live)showFailed();
   });
 }
 
@@ -215,7 +215,7 @@ function loadFrom(src,w,h,name,example,maxDim){
     S.parts=[];S.lab=null;S.labIdx=null;S.sel=-1;
     if(S.outline){S.outline.width=W;S.outline.height=H;}
     drawView();
-    $("#readout").innerHTML=`<div class="busy"><span class="spin"></span>${M.session?"Analysing…":`Loading the model…<em>${M.loadPct?" "+M.loadPct+"%":""}</em>`}</div>`;
+    showBusy();
     $("#btnSave").hidden=true;
   }
   return analyze();
@@ -273,9 +273,10 @@ const SAFE=(()=>{try{const q=new URLSearchParams(location.search);if(q.has("fast
 function enterSafeMode(reason){
   console.warn("Switching to compatibility mode:",reason);
   let already=false;try{already=localStorage.getItem(SAFE_KEY)==="1";localStorage.setItem(SAFE_KEY,"1");}catch(e){}
-  if(SAFE||already){showMsg("Detection isn't working in this browser. "+esc(String(reason))+" Try updating the browser, or use Chrome or Edge.");return;}
-  try{sessionStorage.setItem("microscan-switched","1");}catch(e){}
-  showMsg("Switching to compatibility mode for this browser…");
+  if(SAFE||already){if(S.base&&!S.live)showFailed();return;}
+  try{sessionStorage.setItem("microscan-switched","1");
+    if(S.base&&!S.live){sessionStorage.setItem("microscan-pending",S.base.toDataURL("image/jpeg",0.9));sessionStorage.setItem("microscan-pending-name",S.name||"Image");}}catch(e){}
+  if(S.base&&!S.live)showBusy();
   setTimeout(()=>location.reload(),600);
 }
 // Rejects if a promise takes longer than ms (e.g. a graphics driver that hangs).
@@ -312,6 +313,12 @@ function buildModelClasses(){
   CLS=c;
 }
 function showMsg(html){const m=$("#liveMsg");m.innerHTML=html;m.hidden=!html;}
+// Count box states: a spinner with "Analyzing…" while the model loads or works; a tap-to-retry note if it fails.
+function showBusy(){$("#readout").innerHTML=`<div class="busy"><span class="spin"></span>Analyzing…</div>`;}
+function showFailed(){
+  $("#readout").innerHTML=`<button class="busy retry" id="btnRetry" type="button">Couldn't analyze. Tap to try again.</button>`;
+  $("#btnRetry").onclick=retryModel;
+}
 /* ---------- model download: in pieces with retries, kept in the browser's cache ---------- */
 const MODEL_CACHE="microscan-model";
 function setLoadPct(p){M.loadPct=p;const el=document.querySelector("#readout .busy em");if(el)el.textContent=` ${p}%`;}
@@ -367,9 +374,9 @@ async function downloadModel(url){
   return buf;
 }
 function retryModel(){
-  showMsg("");M.loadPct=0;
-  M.ready=loadModel(MODEL_URL);
-  if(S.base&&!S.live){$("#readout").innerHTML=`<div class="busy"><span class="spin"></span>Loading the model…<em></em></div>`;analyze();}
+  M.loadPct=0;
+  if(!M.session)M.ready=loadModel(MODEL_URL);
+  if(S.base&&!S.live){showBusy();analyze();}
 }
 
 async function loadModel(url){
@@ -404,17 +411,18 @@ async function loadModel(url){
     M.session=null;
     if(!SAFE&&/took too long|wasm|worker|thread/i.test(e?.message||"")){enterSafeMode(e?.message||e);return;}
     const local=location.protocol==="file:";
-    let why=esc(e?.message||String(e));if(!/[.!?]$/.test(why))why+=".";
-    showMsg("The YOLO11 model couldn't be loaded. "+why+(local?" Open the app through the local server (run <code>npm start</code>, then go to http://localhost:5173) instead of opening index.html directly.":""));
-    $("#readout").innerHTML="";
-    $("#liveMsg").insertAdjacentHTML("beforeend",' <button class="tb" id="btnRetry" type="button" style="height:32px;display:inline-flex;margin-left:6px">Retry</button>');
-    $("#btnRetry").onclick=retryModel;
+    console.error("Model could not be loaded:",e);
+    if(S.base&&!S.live)showFailed();
   }
 }
 // Load the model once at startup; analysis waits for it.
 M.ready=loadModel(MODEL_URL);
+// Re-open a photo that was waiting when the page switched to compatibility mode.
+try{const pend=sessionStorage.getItem("microscan-pending");if(pend){const nm=sessionStorage.getItem("microscan-pending-name")||"Image";
+  sessionStorage.removeItem("microscan-pending");sessionStorage.removeItem("microscan-pending-name");
+  const im=new Image();im.onload=()=>loadFrom(im,im.naturalWidth,im.naturalHeight,nm,false);im.src=pend;}}catch(e){}
 M.ready.then(()=>{try{if(sessionStorage.getItem("microscan-switched")){sessionStorage.removeItem("microscan-switched");
-  if(M.session)toast("Switched to compatibility mode for this browser. Choose your image again.");}}catch(e){}});
+  }}catch(e){}});
 // Remove a model remembered by older versions of this app.
 try{indexedDB.deleteDatabase("microplastic-bench");}catch(e){}
 
@@ -662,7 +670,8 @@ document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;if(!$("#histV
 function onUncaught(msg){
   if(!msg||/ResizeObserver/.test(msg))return;
   if(!SAFE&&(!M.session||/\[object (Error)?Event\]/.test(msg))){enterSafeMode("The fast mode didn't start in this browser ("+msg+").");return;}
-  showMsg("Something went wrong: "+esc(msg)+" Reload the page with Ctrl + Shift + R.");
+  console.error("Unexpected error:",msg);
+  if(S.base&&!S.live&&!S.parts.length)showFailed();
 }
 window.addEventListener("error",e=>onUncaught(e.message||(e.error&&e.error.message)||String(e.error||"")));
 window.addEventListener("unhandledrejection",e=>{const r=e.reason;onUncaught(r?.message||(r instanceof Event?"[object Event]":String(r||"")));});

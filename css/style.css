@@ -205,3 +205,5 @@ tbody tr.x td:first-child{text-decoration:none}
 .readout .busy{display:flex;align-items:center;gap:8px;font-size:13px;color:#dfe7ea}
 .readout .busy .spin{width:14px;height:14px}
 .readout .busy em{font-style:normal;font-family:var(--f-mono)}
+.readout .retry{pointer-events:auto;cursor:pointer;background:none;border:0;padding:0;font:inherit;font-size:13px;color:#ffd08a;text-align:left}
+.readout .retry:hover{text-decoration:underline}
